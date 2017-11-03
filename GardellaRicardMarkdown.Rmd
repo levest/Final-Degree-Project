@@ -1,0 +1,923 @@
+---
+title: "TFG"
+author: "Ricard Gardella Garcia"
+date: "10/5/2017"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r loadsession, echo=FALSE}
+load("~/TFG/sessionMarkdown.RData")
+```
+
+## Objectives
+
+The objective of this practical deployment is to analyze and compute via descriptive stadistics and machine learning, the delay in flights on the holidays days and the sorrounding days in the USA. The holidays are the days with more air traffic in all over the country and it is then where the problems can appear. Rarely an airport will operate correctly at holidays and with a lot of delays the rest of years, the observation of reality, without need of looking at the data, is clear; The holidays have more air traffic and the consecuence of more air traffic, is more delay in the flights.
+
+## Data used
+
+In order to solve the problem, we are going to use real data obtained from the [American Statistical Association](http://www.amstat.org). The [data](http://stat-computing.org/dataexpo/2009/the-data.html), is about the flights within the USA. The data goes from the 1987 to 2008. Every year is a file .csv that weights aprox 700MB, what makes a total amount of 14700MB. With this amount of data, is correct to talk about a Big data problem.
+
+In order to make the problem efficient and factible, a cutting of data is needed. Only the years 2006 to 2008 will be taken, which makes a total of 2GB aprox, when the data is cutted only with the holidays, the file weights 250MB with 2353000 observations.
+
+## Variable description
+
+This data share the same columns and variable structure, here is the description for each variable:
+
+- 1	Year:	2006-2008
+- 2	Month:	1-12
+- 3	DayofMonth:	1-31
+- 4	DayOfWeek:	1 (Monday) - 7 (Sunday)
+- 5	DepTime:	actual departure time (local, hhmm)
+- 6	CRSDepTime:	scheduled departure time (local, hhmm)
+- 7	ArrTime: actual arrival time (local, hhmm)
+- 8	CRSArrTime:	scheduled arrival time (local, hhmm)
+- 9	UniqueCarrier:	unique carrier code
+- 10	FlightNum:	flight number
+- 11	TailNum:	plane tail number
+- 12	ActualElapsedTime:	in minutes
+- 13	CRSElapsedTime:	in minutes
+- 14	AirTime.	in minutes
+- 15	ArrDelay:	arrival delay, in minutes
+- 16	DepDelay:	departure delay, in minutes
+- 17	Origin:	origin IATA airport code
+- 18	Dest:	destination IATA airport code
+- 19	Distance:	in miles
+- 20	TaxiIn:	taxi in time, in minutes
+- 21	TaxiOut:	taxi out time in minutes
+- 22	Cancelled:	was the flight cancelled?
+- 23	CancellationCode:	reason for cancellation (A = carrier, B = weather, C = NAS, D = security)
+- 24	Diverted:	1 = yes, 0 = no
+- 25	CarrierDelay:	in minutes
+- 26	WeatherDelay:	in minutes
+- 27	NASDelay:	in minutes
+- 28	SecurityDelay:	in minutes
+- 29	LateAircraftDelay:	in minutes
+
+## Importing the data
+Proceeding to load the data into the R Studio environment, in order to do it, a fuction has been created. The function stracts the holidays days of each year and put it together in one data set:
+
+```{r function, eval=FALSE}
+holidaysFunction <- function(year)
+{
+  library(readr)
+  if(year==2006)XYear <- read_csv("~/TFG/CSV/2006.csv")
+  if(year==2007)XYear <- read_csv("~/TFG/CSV/2007.csv")
+  if(year==2008)XYear <- read_csv("~/TFG/CSV/2008.csv")
+  christmas<-subset(XYear, Month%in%12 & DayofMonth%in%20:31 | Month%in%1 & DayofMonth%in%1:8)
+  thanksgiving<- subset(XYear, Month%in%11 & DayofMonth%in%20:30)
+  independenceDay<-subset(XYear, Month%in%7 & DayofMonth%in%2:6)
+  veteransDay<-subset(XYear, Month%in%11 & DayofMonth%in%9:14)
+  total<- rbind(christmas, thanksgiving,independenceDay,veteransDay)
+  return (total)
+}
+```
+If a separated R file for functions is used, is necessary to import it.
+
+```{r importFunctions}
+source("~/TFG/FunctionsTFG.R")
+```
+
+Using the function, the data is imported and merged.
+```{r importing, eval=FALSE}
+holidays2008 <- holidaysFunction(2008)
+holidays2007 <-holidaysFunction(2007)
+holidays2006 <-holidaysFunction(2006)
+dataHolidays<- rbind(holidays2008, holidays2007,holidays2006)
+```
+First of all, cleansing of the data in mandatory, in order to delete incomplete rows or empty rows. The rows with empty or null delay will be deleted. More than 50000 rows will be deleted, that's why is so important to clean the data before start working with them.
+
+```{r dataclean,eval=FALSE}
+dataHolidays <- dataHolidays[!(dataHolidays$DepDelay == ""), ]
+dataHolidays <- dataHolidays[!is.na(dataHolidays$DepDelay), ]
+dataHolidays <- dataHolidays[!(dataHolidays$ArrDelay == ""), ]
+dataHolidays <- dataHolidays[!is.na(dataHolidays$ArrDelay), ]
+```
+
+It is necessary, in order to do more usefull descriptive analytics, to include the destiny and origin state for each flight. A new .csv will be needed, called, airports.csv
+```{r importairpots, eval=FALSE}
+airports <- read.csv("~/TFG/CSV/airports.csv")
+```
+Description of the vartiables of the airports.csv:
+
+- 1 iata: the international airport abbreviation code
+- 2 name of the airport.
+- 3 city.
+- 4 State.
+- 5 Country.
+- 6 lat: Latitude of the airport.
+- 7 log: Longitude of the airport.
+
+A brew summary or the airports:
+```{r summaryof airports, echo =FALSE}
+knitr::kable(summary(airports))
+```
+
+
+Here is a map of all the airports used. In the data there are even more airports, because the military bases, military airports and other instalations of the NAVY and the Goverment of the United States of America are included in the airports.csv. Only the airports recorded in the dataHolidays data set are taked into account.
+
+The map shows every airport with is total departure and arribal delay and the mean of both variables. There are different representations in color depending of each airport
+- Orange if the departuredelay is bigger than the arribal delay.
+- Red if the departuredelay is bigger than the arribal delay and the mean
+
+```{r functionmapairports, eval=FALSE, echo = TRUE}
+printMap <- function()
+{
+  library(leaflet)
+  m <- leaflet()
+  m <- addTiles(m)
+  validAirports = unique(dataHolidays$Origin) #Non repeated values
+  validAirports <- unique(dataHolidays$Dest,incomparables = validAirports) 
+  #For each airport
+  for(i in 1:nrow(airports)) {
+    row= airports[i,]
+    #Check if the iata is from any of our valid airports
+    if(row$iata%in%validAirports | row$iata%in%validAirports){
+      #we sum all the departure and arribal delays and calculate the mean of each one.
+      departureDelay = sum(dataHolidays$DepDelay[which(dataHolidays$Origin%in%row$iata)])
+      meandeparturedelay = mean(dataHolidays$DepDelay[which(dataHolidays$Origin%in%row$iata)])
+      arribalDelay = sum(dataHolidays$ArrDelay[which(dataHolidays$Dest%in%row$iata)])
+      meanarribaldelay = mean(dataHolidays$ArrDelay[which(dataHolidays$Dest%in%row$iata)])
+      #String contruction for the map
+      contentairport <- paste(sep= " ", "<b>", row$airport, "</b>")
+      contentdeparturedelay <- paste(sep= " ", "Total departure delay: " ,departureDelay)
+      contentmeandeparturedelay <- paste(sep= " ", "Mean departure delay: " ,meandeparturedelay)
+      contentarribaldelay <- paste(sep= " ", "Total arribal delay: " ,arribalDelay)
+      contentmeanarribaldelay <- paste(sep= " ", "Mean arribal delay: " ,meanarribaldelay)
+      #merge of all the strings
+      content <- paste(sep = "<br/>",contentairport,contentdeparturedelay,contentmeandeparturedelay,contentarribaldelay,contentmeanarribaldelay)
+      #Add a marker to the map
+      icon = makeAwesomeIcon(icon = 'plane', markerColor="green")
+      if(departureDelay > arribalDelay)
+      {
+      icon = makeAwesomeIcon(icon = 'plane', markerColor="orange")
+        if(meandeparturedelay >= 15)
+        {
+          icon = makeAwesomeIcon(icon = 'plane', markerColor="red")
+        }
+      }
+      m <-addAwesomeMarkers(m, lng=row$long, lat=row$lat, popup=content, icon = icon)
+    }
+  }
+  return (m) 
+}
+```
+```{r printmap, echo=TRUE}
+map <- printMap()
+map %>% addProviderTiles(providers$OpenStreetMap)
+```
+
+
+New columns for the existing dataHolidays data set will be needed in order to store the origin and destination states. Those lines, create a new column and fill them with a value, "a" in this case, any character can be used to create the new columns.
+
+It must be filled with a character, not a number.
+
+```{r creationcolumnsstates, eval=FALSE}
+dataHolidays$OriginState = "a"
+dataHolidays$DestinationState = "a"
+```
+
+After several optimitzations, this code fills the OriginState and DestinationState in a reasonable time, more or less 5 minutes. It is important to take into account, that filling 2,3 million rows, that is 4,6 million registers, take some time.
+
+This function is located in a separeted file, but can be done in the same. As said before, it is recomended to structure the code and separate the closed functions from the general code.
+
+This function, for each airport, search all the Origin and Dest from DataHolidays and compare it with his actual iata, then, fill the fields OriginState and DestionationState with the same iata code with the state of the airport.
+
+```{r insertStates, eval=FALSE}
+addStatesintoDataHolidays <- function()
+{
+    for(i in 1:nrow(airports)) {
+      print(i)
+      row= airports[i,]
+      dataHolidays$OriginState[which(dataHolidays$Origin%in%row$iata)]= as.character(row$state)
+      dataHolidays$DestinationState[which(dataHolidays$Dest%in%row$iata)]= as.character(row$state)
+    }
+  return (dataHolidays)
+}
+```
+
+Summary of the dataset, here, we can see general information about the dataset.
+```{r summarydataholidays }
+knitr::kable(summary(dataHolidays))
+```
+
+In order to make plots and histograms, with the computation power that this computer have, is necessary to cut the data. 500000 random rows will be taken from the 2400000 of the total.
+
+```{r reduce data}
+dataReducted <- dataHolidays[sample(nrow(dataHolidays), 500000), ]
+```
+
+Histograms of the Departure Delay and Arribal Delay. There are a lot of similarity between this two histograms.
+
+```{r histoarrdepdelay}
+library(ggplot2)
+qplot(dataReducted$ArrDelay,geom="histogram",main="Arrival delay histogram", binwidth=0.5,xlab = "Arribal Delay" )
+qplot(dataReducted$DepDelay,geom="histogram",main="Departure delay histogram", binwidth=0.5,xlab = "Departure Delay" )
+
+```
+
+In the last two histograms, is seen that the data is not gaussian because all the data is concentrated in one point, in order to see how the data is distributed, the logarithm of the variables DepDelay and ArrDelay will be represented in the same way that before. In the next histograms, the data is seen in a more clear way.
+```{r loghistoarrdepdelay, warning=FALSE}
+library(ggplot2)
+qplot(log(dataReducted$ArrDelay),geom="histogram",main="Arrival delay histogram", binwidth=0.5, xlab = "Arribal Delay" )
+qplot(log(dataReducted$DepDelay),geom="histogram",main="Departure delay histogram", binwidth=0.5,xlab = "Departure Delay" )
+
+```
+Here, a relation between departure delay and arribal delay. A clear relation is seen in this plot, as higher is the Departure Delay (DepDelay) higher is the Arribal Delay (ArrDelay). Makes sense, because rarely a flight that have departure delay arribes on time.
+
+```{r arribal&departure delay plot, warning=FALSE, echo=FALSE}
+library(ggplot2)
+qplot(x = DepDelay, y = ArrDelay, data = dataReducted) +
+        geom_smooth(method = "lm", se = FALSE) +
+        ggtitle("Relation between Arrival Delay and Departure Delay")
+```
+
+Here, a relation between the Arribal delay and the state. There is no clear relation between Arribal delay and state, but is clear that Minessota, Texas and Wisconsin have more general arribal delay than the other states.
+```{r arribal&State delay plot, warning=FALSE, echo=FALSE}
+library(ggplot2)
+a <- ggplot(dataReducted, aes(OriginState, ArrDelay) ) +
+  geom_point()+
+  theme(axis.text.x = element_text(colour="grey20",size=10,angle=90,hjust=.5,vjust=.5,face="plain"),
+        axis.text.y = element_text(colour="grey20",size=12,angle=0,hjust=1,vjust=0,face="plain"),  
+        axis.title.x = element_text(colour="grey20",size=12,angle=0,hjust=.5,vjust=0,face="plain"),
+        axis.title.y = element_text(colour="grey20",size=12,angle=90,hjust=.5,vjust=.5,face="plain"))
+a
+```
+
+Here, a relation between the departure delay and the state. Is seen than again, Texas, Minesota and Wisconsin have more general departure delay than the other states. Also, as proved before, there is a clear relation between departure delay and arribal delay.
+```{r Departure&State delay plot, warning=FALSE, echo=FALSE}
+library(ggplot2)
+library(plotly)
+a <- ggplot(dataReducted, aes(OriginState, DepDelay) ) +
+  geom_point()+
+  theme(axis.text.x = element_text(colour="grey20",size=10,angle=90,hjust=.5,vjust=.5,face="plain"),
+        axis.text.y = element_text(colour="grey20",size=12,angle=0,hjust=1,vjust=0,face="plain"),  
+        axis.title.x = element_text(colour="grey20",size=12,angle=0,hjust=.5,vjust=0,face="plain"),
+        axis.title.y = element_text(colour="grey20",size=12,angle=90,hjust=.5,vjust=.5,face="plain"))
+a
+```
+
+#Deep Learning and H2o
+
+## Deep learning preparation
+
+In order to start working with H2o, it is necessary to install the package, it can be installed via files or via this code, found on the official [website of H2o](http://h2o-release.s3.amazonaws.com/h2o/rel-ueno/7/index.html): 
+
+```{r installh2o, eval=FALSE}
+# The following two commands remove any previously installed H2O packages for R.
+if ("package:h2o" %in% search()) { detach("package:h2o", unload=TRUE) }
+if ("h2o" %in% rownames(installed.packages())) { remove.packages("h2o") }
+
+# Next, we download packages that H2O depends on.
+if (! ("methods" %in% rownames(installed.packages()))) { install.packages("methods") }
+if (! ("statmod" %in% rownames(installed.packages()))) { install.packages("statmod") }
+if (! ("stats" %in% rownames(installed.packages()))) { install.packages("stats") }
+if (! ("graphics" %in% rownames(installed.packages()))) { install.packages("graphics") }
+if (! ("RCurl" %in% rownames(installed.packages()))) { install.packages("RCurl") }
+if (! ("jsonlite" %in% rownames(installed.packages()))) { install.packages("jsonlite") }
+if (! ("tools" %in% rownames(installed.packages()))) { install.packages("tools") }
+if (! ("utils" %in% rownames(installed.packages()))) { install.packages("utils") }
+
+# Now we download, install and initialize the H2O package for R.
+install.packages("h2o", type="source", repos=(c("http://h2o-release.s3.amazonaws.com/h2o/rel-ueno/7/R")))
+library(h2o)
+localH2O = h2o.init(nthreads=-1)
+
+# Finally, let's run a demo to see H2O at work.
+demo(h2o.kmeans)
+```
+
+After the installation, importation of the library and start H2o is needed. The details of the connection show us the characteristics of the H2o.
+```{r h2oinit}
+library(h2o)
+h2o.init()
+```
+
+In order to work properly with H2o, factor the character columns in necessary. If this is not done, H2o just discards those columns.
+
+```{r factordata}
+dataHolidays$Dest<-as.factor(dataHolidays$Dest)
+dataHolidays$Origin<-as.factor(dataHolidays$Origin)
+dataHolidays$UniqueCarrier<-as.factor(dataHolidays$UniqueCarrier)
+dataHolidays$TailNum<-as.factor(dataHolidays$TailNum)
+dataHolidays$CancellationCode<-as.factor(dataHolidays$CancellationCode)
+dataHolidays$OriginState<-as.factor(dataHolidays$OriginState)
+dataHolidays$DestinationState<-as.factor(dataHolidays$DestinationState)
+dataHolidays$CancellationCode<-as.factor(dataHolidays$CancellationCode)
+dataHolidays$Cancelled<-as.factor(dataHolidays$Cancelled)
+dataHolidays$Diverted<-as.factor(dataHolidays$Diverted)
+```
+
+Once that data is ready, the data must be transformed to the H2o format. This method can take some time if working with a large data set.
+
+```{r dataholidaysh2o, warning=FALSE}
+dataHolidaysH2o <- as.h2o(dataHolidays)
+```
+
+The Deep Learning learns about the data that we give to the model, but, to test and validate the model, more data is needed. In order to solve this problem, the data is splited in three parts, one for train the model, other one for validate the model and a last one for test the model. The data taken is random and the % can be changed.
+
+```{r splits}
+splits <- h2o.splitFrame(dataHolidaysH2o, c(0.6,0.2), seed=1234)
+train  <- h2o.assign(splits[[1]], "train.hex") # 60%
+valid  <- h2o.assign(splits[[2]], "valid.hex") # 20%
+test   <- h2o.assign(splits[[3]], "test.hex")  # 20%
+```
+
+We want to learn about the variable ArrDelay. We must specify also, the other variables that we consider important in relation to this variable. More variables, does not equal better model.
+
+```{r YandXfirst}
+#We want to learn about the arribal delay
+Y = "ArrDelay" 
+#The variables that we will take into account are the following ones.
+X= c("DepDelay","Origin","Dest","DayOfWeek","OriginState","DestinationState", "Month","DayofMonth")
+```
+ Explanation of the parameters used:
+ -1
+ -2
+ 
+#### First Deep Learning Model
+
+Once the variables to compute and the data is ready, the deep learning method can be executed.
+```{r m1DL, eval=FALSE}
+model1 <- h2o.deeplearning(
+  x = X,
+  y = Y,
+  training_frame = train,#training frame used
+  model_id = "model1" ,
+  validation_frame = valid #validation frame used
+  )
+```
+
+As the computation of the Deep Learning model takes a lot of time, is possible to save the model for future analysis.
+
+```{r savemodel, eval=FALSE}
+h2o.saveModel(model1, path = "/models") #Save the model
+```
+
+Summary of the model m1.
+```{r loadm1, echo=FALSE}
+model1 <- h2o.loadModel(path = "./TFG/models/model1")
+```
+
+
+```{r summarym1}
+summary(model1)
+```
+
+The performance of the model is showed below with the test data set:
+
+```{r model1performance}
+h2o.performance(model1, newdata = test)
+```
+
+To see if the predictions are correct, we must test our model with the Test split that was done before.
+
+The predicts are based on the X variable, ArrDelay, which is expressed in minutes. In order to distict the correct predictons of the incorrect, this formula has been used: 
+||(X-Y|/Y| <= 0.7 | ||(Y-X)|/X| <= 0.7
+
+If the values of the predicted in relation to the real or the values or the real in relation to the predicted are less different than 70% the prediction is considered correct.
+
+To see the % of strikes, the mean is calculate. The error can be calculated to if 1-mean is calcultated.
+
+```{r m1predict}
+#Prediction 
+predmodel1 <- h2o.predict(model1, test) 
+```
+
+```{r meanm1}
+#transform to absolute all data
+resultpredModel1 <- abs(abs(predmodel1$predict - test$ArrDelay)/test$ArrDelay)<=0.7 | 
+                    abs(abs(test$ArrDelay - predmodel1$predict)/predmodel1$predict)<= 0.7
+mean(resultpredModel1)
+```
+And the error of this model is:
+
+```{r errorm1}
+1-mean(resultpredModel1)
+```
+
+A comparation between real ArrDelay and predicted ArrDelay is showed below. As can be seen, the predictions are accurate, proving that the model is correct.
+
+```{r histm1, echo=FALSE}
+predicted = as.data.frame(predmodel1$predict)
+real    = as.data.frame(test$ArrDelay)
+data <- cbind.data.frame(predicted$predict,real$ArrDelay)
+library(ggplot2)
+ggplot(data, aes(x = real, y = predicted)) +
+  geom_abline(lty = "dashed", col = "red") +
+  geom_point() +
+  theme(plot.title = element_text(hjust = 0.5)) +
+  coord_fixed(ratio = 1) +
+  labs(
+    x = "Real Arrival Delay",
+    y = "Predicted Arrival Delay",
+    title = "Predicted vs Real Arrival Delay"
+  )
+```
+#### Tunning Deep Learning Model
+
+Now, the deep learning model will be modified. This new model is more complex in terms of learning, and a lot more expensive in terms of computing. 
+score_duty_cycle=0.025,
+Modifing the Deep Learning model is tuning the model to obtain the desired result. In this case, more complex and more accurate model.
+```{r model2DL, eval=FALSE}
+model2 <- h2o.deeplearning(
+  model_id="model2_tunedModel", 
+  training_frame=train, 
+  validation_frame=valid,
+  epochs = 15,
+  x=X, 
+  y=Y, 
+  train_samples_per_iteration = 100000, 
+  overwrite_with_best_model=T,    
+  hidden=c(100,100,100),          
+  score_validation_samples=15000  
+)
+```
+
+Summary of the model m2.
+```{r loadmodel2, echo=FALSE}
+model2<- h2o.loadModel(path = "./TFG/models/model2_tunedModel")
+```
+
+
+```{r summarymodel2}
+summary(model2)
+```
+
+The performance of the model is showed below with the test data set:
+
+```{r model2performance}
+h2o.performance(model2, newdata = test)
+```
+
+The same validations as before are performed, and can be observed, that this model have more precissiong than the last one, 7% more precission but the price is that the computation cost is like two times the first model.
+
+```{r model2predict}
+#Prediction 
+predmodel2 <- h2o.predict(model2, test) 
+```
+
+```{r meanm2}
+#transform to absolute all data
+resultpredModel2 <- abs(abs((predmodel2$predict - test$ArrDelay))/test$ArrDelay)<=0.7 | 
+                    abs(abs(test$ArrDelay - predmodel2$predict)/predmodel2$predict)<= 0.7
+mean(resultpredModel2)
+```
+And the error of this model is lower than the last one model, for the same reason that the precission is higher.
+
+```{r errorm2}
+1-mean(resultpredModel2)
+```
+
+Comparation between real ArrDelay and predicted ArrDelay
+
+```{r histmodel2, echo=FALSE}
+predicted = as.data.frame(predmodel2$predict)
+real    = as.data.frame(test$ArrDelay)
+data <- cbind.data.frame(predicted$predict,real$ArrDelay)
+library(ggplot2)
+ggplot(data, aes(x = real, y = predicted)) +
+  geom_abline(lty = "dashed", col = "red") +
+  geom_point() +
+  theme(plot.title = element_text(hjust = 0.5)) +
+  coord_fixed(ratio = 1) +
+  labs(
+    x = "Real Arrival Delay",
+    y = "Predicted Arrival Delay",
+    title = "Predicted vs Real Arrival Delay"
+  )
+```
+
+#### Faster Deep Learning Model
+
+The model has been modified again, now, this model, is a lot more faster than the previous one. It can be usefull to compare if a more complex and expensive model really worth.
+
+Modifing the Deep Learning model is tuning the model to obtain the desired result. In this case, more fast model.
+```{r model3DL, eval=FALSE}
+model3 <- h2o.deeplearning(
+  model_id="model3_fastermodel", 
+  training_frame=train, 
+  validation_frame=valid,
+  x=X,
+  y=Y,
+  hidden=c(32,32),                  ## small network == faster
+  epochs=1,              
+  score_validation_samples=10000     
+)
+```
+
+Summary of the model m3.
+```{r loadmodel3, echo=FALSE}
+model3<- h2o.loadModel(path = "./TFG/models/model3_fastermodel")
+```
+
+
+```{r summarymodel3}
+summary(model3)
+```
+
+The performance of the model is showed below with the test data set:
+
+```{r model3performance}
+h2o.performance(model3, newdata = test)
+```
+
+The same validations as before are performed:
+
+```{r model3predict}
+#Prediction 
+predmodel3 <- h2o.predict(model3, test) 
+```
+
+```{r meanm3}
+#transform to absolute all data
+resultpredModel3 <- abs(abs(predmodel3$predict - test$ArrDelay)/test$ArrDelay)<=0.7 | 
+                    abs(abs(test$ArrDelay - predmodel3$predict)/predmodel3$predict)<= 0.7
+mean(resultpredModel3)
+```
+And the error of this model is:
+
+```{r errorm3}
+1-mean(resultpredModel3)
+```
+
+Comparation between real ArrDelay and predicted ArrDelay:
+
+```{r histmodel3, echo=FALSE}
+predicted = as.data.frame(predmodel3$predict)
+real    = as.data.frame(test$ArrDelay)
+data <- cbind.data.frame(predicted$predict,real$ArrDelay)
+names(data) <- c("predicted", "real")
+library(ggplot2)
+ggplot(data, aes(x = real, y = predicted)) +
+  geom_abline(lty = "dashed", col = "red") +
+  geom_point() +
+  theme(plot.title = element_text(hjust = 0.5)) +
+  coord_fixed(ratio = 1) +
+  labs(
+    x = "Real Arrival Delay",
+    y = "Predicted Arrival Delay",
+    title = "Predicted vs Real Arrival Delay"
+  )
+```
+
+####GLM
+Now, a glm model will be created.
+
+The method for the creation of a GLM is very different.
+```{r modelglm, eval=FALSE}
+GLM <- h2o.glm(x=X,y = Y,training_frame = train,model_id = "glm",validation_frame = valid, family="gaussian")
+```
+
+Summary of the GLM.
+```{r laodglm, echo=FALSE}
+GLM<- h2o.loadModel(path = "./TFG/models/glm")
+```
+Performance of the model:
+```{r glmperformance}
+h2o.performance(GLM, newdata = test)
+```
+
+```{r summaryglm}
+summary(GLM)
+```
+
+The same validations as before are performed:
+
+```{r glmpredict}
+#Prediction 
+predglm <- h2o.predict(GLM, test) 
+```
+
+```{r meanglm}
+#transform to absolute all data
+resultpredGLM <-abs(abs(predglm$predict - test$ArrDelay)/test$ArrDelay)<=0.7 | 
+                    abs(abs(test$ArrDelay - predglm$predict)/predglm$predict)<= 0.7
+mean(resultpredGLM)
+```
+And the error of this model is:
+
+```{r errorglm}
+1-mean(resultpredGLM)
+```
+
+Comparation between real ArrDelay and predicted ArrDelay:
+
+```{r histoglm, echo=FALSE}
+predicted = as.data.frame(predglm$predict)
+real    = as.data.frame(test$ArrDelay)
+data <- cbind.data.frame(predicted$predict,real$ArrDelay)
+names(data) <- c("predicted", "real")
+library(ggplot2)
+ggplot(data, aes(x = real, y = predicted)) +
+  geom_abline(lty = "dashed", col = "red") +
+  geom_point() +
+  theme(plot.title = element_text(hjust = 0.5)) +
+  coord_fixed(ratio = 1) +
+  labs(
+    x = "Real Arribal Delay",
+    y = "Predicted Arribal Delay",
+    title = "Predicted vs Real Arribal Delay"
+  )
+```
+
+
+### Deep Learling changing the parameters
+
+Now, the same code will be executed, but, with different variables. Instead of having 8 variables on the Y, now, only 3 will be. Usefull to see if more variables increment or descrease the precission of the models.
+
+Once the variables to compute and the data is ready, the deep learning method can be executed.
+
+We want to learn about the variable ArrDelay. We must specify also, the other variables that we consider important in relation to this variable. More variables equal a better model?
+
+```{r YandXLP}
+#We want to learn about the arribal delay
+Y = "ArrDelay" 
+#The variables that we will take into account are the following ones.
+X= c("DepDelay","Origin","Dest")
+```
+## Deep learning less parameters.
+
+#### First Model
+
+```{r m1DLLP, eval=FALSE}
+model1 <- h2o.deeplearning(
+  x = X,
+  y = Y,
+  training_frame = train,#training frame used
+  model_id = "model1LessParameters" ,
+  validation_frame = valid #validation frame used
+  )
+```
+
+
+Summary of the model modelM1lessParameters.
+```{r loadm1LP, echo=FALSE}
+model1LessParameters <- h2o.loadModel(path = "./TFG/models/model1LessParameters")
+```
+
+
+```{r summarym1LP}
+summary(model1LessParameters)
+```
+
+The performance of the model is showed below with the test data set:
+
+```{r model1LPperformance}
+h2o.performance(model1LessParameters, newdata = test)
+```
+The same validations as before are performed, and can be observed, that this model have more precissiong than the last one, 7% more precission but the price is that the computation cost is like two times the first model.
+
+```{r m1predictLP}
+#Prediction 
+predmodel1LessParameters <- h2o.predict(model1LessParameters, test) 
+```
+
+```{r meanm1LP}
+#transform to absolute all data
+resultpredModel1LP <- abs(abs(predmodel1LessParameters$predict - test$ArrDelay)/test$ArrDelay)<=0.7 | 
+                    abs(abs(test$ArrDelay - predmodel1LessParameters$predict)/predmodel1LessParameters$predict)<= 0.7
+mean(resultpredModel1LP)
+```
+And the error of this model is:
+
+```{r errorm1LP}
+1-mean(resultpredModel1LP)
+```
+
+A comparation between real ArrDelay and predicted ArrDelay is showed below. As can be seen, the predictions are accurate, proving that the model is correct.
+
+```{r histm1LP, echo=FALSE}
+predicted = as.data.frame(predmodel1LessParameters$predict)
+real  = as.data.frame(test$ArrDelay)
+data <- cbind.data.frame(predicted$predict,real$ArrDelay)
+names(data) <- c("predicted", "real")
+library(ggplot2)
+ggplot(data, aes(x = real, y = predicted)) +
+  geom_abline(lty = "dashed", col = "red") +
+  geom_point() +
+  theme(plot.title = element_text(hjust = 0.5)) +
+  coord_fixed(ratio = 1) +
+  labs(
+    x = "Real Arribal Delay",
+    y = "Predicted Arribal Delay",
+    title = "Predicted vs Real Arribal Delay"
+  )
+```
+#### Tunned Deep Learning Model with less parameters
+
+Now, the deep learning model will be modified. This new model is more complex in terms of learning, and a lot more expensive in terms of computing. 
+
+Modifing the Deep Learning model is tuning the model to obtain the desired result. In this case, more complex and more accurate model.
+```{r model2DLLP, eval=FALSE}
+model2LessParameters <- h2o.deeplearning(
+  model_id="model2_tunedModel_LessParameters", 
+  training_frame=train, 
+  validation_frame=valid,
+  epochs = 15,
+  x=X, 
+  y=Y, 
+  train_samples_per_iteration = 100000, 
+  overwrite_with_best_model=T,    
+  hidden=c(100,100,100),          
+  score_validation_samples=15000  
+) 
+```
+
+Summary of the model m2.
+```{r loadmodel2LP, echo=FALSE}
+model2LessParameters<- h2o.loadModel(path = "./TFG/models/model2_tunedModel_LessParameters")
+```
+
+
+```{r summarymodel2LP}
+summary(model2LessParameters)
+```
+
+The performance of the model is showed below with the test data set:
+
+```{r model2LPPerformance}
+h2o.performance(model2LessParameters, newdata = test)
+```
+
+The same validations as before are performed, and can be observed, that this model have more precissiong than the last one, 7% more precission but the price is that the computation cost is like two times the first model.
+
+```{r model2predictLP}
+#Prediction 
+predmodel2LP <- h2o.predict(model2LessParameters, test) 
+```
+
+```{r meanm2LP}
+#transform to absolute all data
+resultpredModel2LP <- abs(abs(predmodel2LP$predict - test$ArrDelay)/test$ArrDelay)<=0.7 | 
+                    abs(abs(test$ArrDelay - predmodel2LP$predict)/predmodel2LP$predict)<= 0.7
+mean(resultpredModel2LP)
+```
+And the error of this model is lower than the last one model, for the same reason that the precission is higher.
+
+```{r errorm2LP}
+1-mean(resultpredModel2LP)
+```
+
+Comparation between real ArrDelay and predicted ArrDelay
+
+```{r histmodel2LP, echo=FALSE}
+predicted = as.data.frame(predmodel2LP$predict)
+real  = as.data.frame(test$ArrDelay)
+data <- cbind.data.frame(predicted$predict,real$ArrDelay)
+names(data) <- c("predicted", "real")
+library(ggplot2)
+ggplot(data, aes(x = real, y = predicted)) +
+  geom_abline(lty = "dashed", col = "red") +
+  geom_point() +
+  theme(plot.title = element_text(hjust = 0.5)) +
+  coord_fixed(ratio = 1) +
+  labs(
+    x = "Real Arrival Delay",
+    y = "Predicted Arrival Delay",
+    title = "Predicted vs Real Arrival Delay"
+  )
+```
+
+#### Faster Deep Learning Model
+
+The model has been modified again, now, this model, is a lot more faster than the previous one. It can be usefull to compare if a more complex and expensive model really worth.
+
+Modifing the Deep Learning model is tuning the model to obtain the desired result. In this case, more fast model.
+```{r model3DLLP, eval=FALSE}
+model3LessParameters <- h2o.deeplearning(
+  model_id="model3_fastermodel", 
+  training_frame=train, 
+  validation_frame=valid,
+  x=X,
+  y=Y,
+  hidden=c(32,32),                  ## small network, runs faster
+  epochs=10,              
+  score_validation_samples=10000,      ## sample the validation dataset (faster)
+  stopping_rounds=2,
+  stopping_metric="MSE", ## could be "MSE","logloss","r2"
+  stopping_tolerance=0.01
+)
+```
+
+Summary of the model m3.
+```{r loadmodel3lp, echo=FALSE}
+model3LessParameters<- h2o.loadModel(path = "./TFG/models/model3_fastermodel_LessParameters")
+```
+
+
+```{r summarymodel3LP}
+summary(model3LessParameters)
+```
+
+The performance of the model is showed below with the test data set:
+
+```{r model3LPPerformance}
+h2o.performance(model3LessParameters, newdata = test)
+```
+
+The same validations as before are performed:
+
+```{r model3predictLP}
+#Prediction 
+predmodel3LP <- h2o.predict(model3LessParameters, test) 
+```
+
+```{r meanm3LP}
+#transform to absolute all data
+resultpredModel3LP <- abs(abs(predmodel3LP$predict - test$ArrDelay)/test$ArrDelay)<=0.7 | 
+                    abs(abs(test$ArrDelay - predmodel3LP$predict)/predmodel3LP$predict)<= 0.7
+mean(resultpredModel3LP)
+```
+And the error of this model is:
+
+```{r errorm3LP}
+1-mean(resultpredModel3LP)
+```
+
+Comparation between real ArrDelay and predicted ArrDelay:
+
+```{r histmodel3LP, echo=FALSE}
+predicted = as.data.frame(predmodel3LP$predict)
+real    = as.data.frame(test$ArrDelay)
+data <- cbind.data.frame(predicted$predict,real$ArrDelay)
+names(data) <- c("predicted", "real")
+library(ggplot2)
+ggplot(data, aes(x = real, y = predicted)) +
+  geom_abline(lty = "dashed", col = "red") +
+  geom_point() +
+  theme(plot.title = element_text(hjust = 0.5)) +
+  coord_fixed(ratio = 1) +
+  labs(
+    x = "Real Arrival Delay",
+    y = "Predicted Arrival Delay",
+    title = "Predicted vs Real Arrival Delay"
+  )
+```
+
+####GLM with less parameters
+Now, a glm model will be created.
+
+The method for the creation of a GLM is very different.
+```{r GLMLP, eval=FALSE}
+GLMLP <- h2o.glm(x=X,y = Y,training_frame = train,model_id = "glmLessParameters",validation_frame = valid, family="gaussian")
+```
+
+Summary of the GLM.
+```{r loadglmlp, echo=FALSE}
+GLMLP<- h2o.loadModel(path = "./TFG/models/glmLessParameters")
+```
+
+
+```{r summaryglmlp}
+summary(GLMLP)
+```
+
+The performance of the model is showed below with the test data set:
+
+```{r GLMLPperformance}
+h2o.performance(GLMLP, newdata = test)
+```
+
+The same validations as before are performed:
+
+```{r glmpredictlp}
+#Prediction 
+predglmLP <- h2o.predict(GLMLP, test) 
+```
+
+```{r meanglmlp}
+#transform to absolute all data
+resultpredGLMLP <- abs(abs(predglmLP$predict - test$ArrDelay)/test$ArrDelay)<=0.7 | 
+                    abs(abs(test$ArrDelay - predglmLP$predict)/predglmLP$predict)<= 0.7
+mean(resultpredGLMLP)
+```
+And the error of this model is:
+
+```{r errorglmlp}
+1-mean(resultpredGLMLP)
+```
+
+Comparation between real ArrDelay and predicted ArrDelay:
+
+```{r histoglmlp, echo=FALSE}
+predicted = as.data.frame(predglm$predict)
+real    = as.data.frame(test$ArrDelay)
+data <- cbind.data.frame(predicted$predict,real$ArrDelay)
+names(data) <- c("predicted", "real")
+library(ggplot2)
+ggplot(data, aes(x = real, y = predicted)) +
+  geom_abline(lty = "dashed", col = "red") +
+  geom_point() +
+  theme(plot.title = element_text(hjust = 0.5)) +
+  coord_fixed(ratio = 1) +
+  labs(
+    x = "Real Arrival Delay",
+    y = "Predicted Arrival Delay",
+    title = "Predicted vs Real Arrival Delay"
+  )
+```
+
